@@ -160,7 +160,7 @@ func (app *SpacemeshApp) before(ctx *cli.Context) error {
 				log.Warning("Config file had an error: %v", err)
 			}
 		} else {
-			log.Warning("Coun'nt find config file %v", configPath)
+			log.Warning("Did find config file %v", configPath)
 		}
 	} else {
 		log.Warning("No config file defined using default config")
@@ -170,6 +170,8 @@ func (app *SpacemeshApp) before(ctx *cli.Context) error {
 
 	// ensure all data folders exist
 	filesystem.EnsureSpacemeshDataDirectories()
+
+	log.Info("Data directory: %s", config.ConfigValues.DataFilePath)
 
 	// load all accounts from store
 	accounts.LoadAllAccounts()
