@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ConfigValues specifies  default values for node config params
+// ConfigValues specifies  default values for node config params.
 var ConfigValues = Config{
 	SecurityParam: 20,
 	FastSync:      true,
@@ -17,7 +17,7 @@ var ConfigValues = Config{
 	SwarmConfig:   SwarmConfigValues,
 }
 
-// SwarmConfigValues defines default values for swarm config params
+// SwarmConfigValues defines default values for swarm config params.
 var SwarmConfigValues = SwarmConfig{
 	Bootstrap:              false,
 	RoutingTableBucketSize: 20,
