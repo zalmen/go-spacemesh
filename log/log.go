@@ -10,25 +10,24 @@ import (
 	"path/filepath"
 )
 
-// SpacemeshLogger is a custom logger for Spacemesh project.
+// SpacemeshLogger is a custom logger.
 type SpacemeshLogger struct {
 	Logger *logging.Logger
 }
 
-// uLogger is the local app singleton logger.
-var ulogger *SpacemeshLogger
+// smlogger is the local app singleton logger.
+var smLogger *SpacemeshLogger
 
 func init() {
 	// create a basic temp os.Stdout logger
-	// This logger is going to be used by tests when an app was is created
+	// This logger is used until the app calls InitSpacemeshLoggingSystem().
 	log := logging.MustGetLogger("app")
 	log.ExtraCalldepth = 1
-	logFormat := logging.MustStringFormatter(`%{color}%{level:.4s} %{id:03x} %{time:15:04:05.000} %{shortpkg}.%{shortfunc} ▶%{color:reset} %{message}`)
-	backend := logging.NewLogBackend(os.Stdout, "", 0)
+	logFormat := logging.MustStringFormatter(` %{color}%{level:.4s} %{id:03x} %{time:15:04:05.000} %{shortpkg}.%{shortfunc} ▶%{color:reset} %{message}`)
+	backend := logging.NewLogBackend(os.Stdout, "<APP>", 0)
 	backendFormatter := logging.NewBackendFormatter(backend, logFormat)
 	logging.SetBackend(backendFormatter)
-	ulogger = &SpacemeshLogger{Logger: log}
-
+	smLogger = &SpacemeshLogger{Logger: log}
 }
 
 // CreateLogger creates a logger for a module. e.g. local node logger.
@@ -37,7 +36,9 @@ func CreateLogger(module string, dataFolderPath string, logFileName string) *log
 	log := logging.MustGetLogger(module)
 	log.ExtraCalldepth = 1
 	logFormat := logging.MustStringFormatter(` %{color}%{level:.4s} %{id:03x} %{time:15:04:05.000} %{shortpkg}.%{shortfunc} ▶%{color:reset} %{message}`)
-	backend := logging.NewLogBackend(os.Stderr, module, 0)
+
+	// module name is set is message prefix
+	backend := logging.NewLogBackend(os.Stdout, module, 0)
 	backendFormatter := logging.NewBackendFormatter(backend, logFormat)
 
 	fileName := filepath.Join(dataFolderPath, logFileName)
@@ -51,9 +52,15 @@ func CreateLogger(module string, dataFolderPath string, logFileName string) *log
 	}
 
 	fileLoggerBackend := logging.NewLogBackend(fileLogger, "", 0)
-	logFileFormat := logging.MustStringFormatter(` %{time:15:04:05.000} %{level:.4s} %{id:03x} %{shortpkg}.%{shortfunc} ▶ %{message}`)
+	logFileFormat := logging.MustStringFormatter(`%{time:15:04:05.000} %{level:.4s} %{id:03x} %{shortpkg}.%{shortfunc} ▶ %{message}`)
 	fileBackendFormatter := logging.NewBackendFormatter(fileLoggerBackend, logFileFormat)
 
+	// todo: this is kinda bad - it replaces any previously set backends.
+	// what we want is to have a logger per module. e.g. app, a node and make sure
+	// that only logging messages from that module goes to its logger (console + log file)
+	// for example - app-level log entries should not be outputted as node entries - this is the current behavior
+	// this is also an issue for tests where we see log from node1 appears as if it came from node2 - quite confusing
+	////////////
 	logging.SetBackend(backendFormatter, fileBackendFormatter)
 
 	return log
@@ -67,8 +74,8 @@ func InitSpacemeshLoggingSystem(dataFolderPath string, logFileName string) {
 	// we wrap all log calls so we need to add 1 to call depth
 	log.ExtraCalldepth = 1
 
-	logFormat := logging.MustStringFormatter(`%{color}%{level:.4s} %{id:03x} %{time:15:04:05.000} %{shortpkg}.%{shortfunc}%{color:reset} ▶ %{message}`)
-	backend := logging.NewLogBackend(os.Stderr, "", 0)
+	logFormat := logging.MustStringFormatter(` %{color}%{level:.4s} %{id:03x} %{time:15:04:05.000} %{shortpkg}.%{shortfunc}%{color:reset} ▶ %{message}`)
+	backend := logging.NewLogBackend(os.Stdout, "<APP>", 0)
 	backendFormatter := logging.NewBackendFormatter(backend, logFormat)
 
 	fileName := filepath.Join(dataFolderPath, logFileName)
@@ -87,29 +94,29 @@ func InitSpacemeshLoggingSystem(dataFolderPath string, logFileName string) {
 
 	logging.SetBackend(backendFormatter, fileBackendFormatter)
 
-	ulogger = &SpacemeshLogger{Logger: log}
+	smLogger = &SpacemeshLogger{Logger: log}
 }
 
 // public wrappers abstracting away logging lib impl
 
 // Info prints formatted info level log message.
 func Info(format string, args ...interface{}) {
-	ulogger.Logger.Info(format, args...)
+	smLogger.Logger.Info(format, args...)
 }
 
 // Debug prints formatted debug level log message.
 func Debug(format string, args ...interface{}) {
-	ulogger.Logger.Debug(format, args...)
+	smLogger.Logger.Debug(format, args...)
 }
 
 // Error prints formatted error level log message.
 func Error(format string, args ...interface{}) {
-	ulogger.Logger.Error(format, args...)
+	smLogger.Logger.Error(format, args...)
 }
 
 // Warning prints formatted warning level log message.
 func Warning(format string, args ...interface{}) {
-	ulogger.Logger.Warning(format, args...)
+	smLogger.Logger.Warning(format, args...)
 }
 
 // PrettyID formats ID.
