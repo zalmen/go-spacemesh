@@ -20,6 +20,7 @@ type LocalNode interface {
 
 	PrivateKey() crypto.PrivateKey
 	PublicKey() crypto.PublicKey
+	NetworkId()	int
 
 	DhtID() dht.ID
 	TCPAddress() string    // ipv4 tcp address that the node is listing on

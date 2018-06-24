@@ -18,12 +18,12 @@ func TestFindNodeProtocolCore(t *testing.T) {
 	node3Local, node3Remote := GenerateTestNode(t)
 
 	// node 1 know about node 2 and node 3
-	d := make(chan error, 2)
-	node1Local.GetSwarm().ConnectTo(node2Local.GetRemoteNodeData(), d)
-	node1Local.GetSwarm().ConnectTo(node3Local.GetRemoteNodeData(), d)
+	//d := make(chan error, 2)
+	node1Local.GetSwarm().getConnectionPool().getConnection(node2Local.TCPAddress(), node2Local.PublicKey())//ConnectTo(node2Local.GetRemoteNodeData(), d)
+	node1Local.GetSwarm().getConnectionPool().getConnection(node3Local.TCPAddress(), node3Local.PublicKey())//.ConnectTo(node3Local.GetRemoteNodeData(), d)
 
-	<-d
-	<-d
+	//<-d
+	//<-d
 
 	// node 2 doesn't know about node 3 and asks node 1 to find it
 	reqID := crypto.UUID()

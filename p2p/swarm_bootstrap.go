@@ -14,6 +14,7 @@ import (
 	"github.com/spacemeshos/go-spacemesh/p2p/dht/table"
 	"github.com/spacemeshos/go-spacemesh/p2p/node"
 	"github.com/spacemeshos/go-spacemesh/p2p/pb"
+	"github.com/spacemeshos/go-spacemesh/crypto"
 )
 
 const (
@@ -35,17 +36,27 @@ func (s *swarmImpl) bootstrap() {
 	// register bootstrap nodes
 	bn := uint32(0)
 	for _, n := range s.config.BootstrapNodes {
-		connected := make(chan error)
-		go func(q chan error) {
-			c := <-q
-			if c == nil {
-				atomic.AddUint32(&bn, 1)
-			}
-		}(connected)
+		//connected := make(chan error)
+		//go func(q chan error) {
+		//	c := <-q
+		//	if c == nil {
+		//		atomic.AddUint32(&bn, 1)
+		//	}
+		//}(connected)
 		rn := node.NewRemoteNodeDataFromString(n)
 		if s.localNode.String() != rn.ID() {
 			s.onRegisterNodeRequest(rn) // this happens before any loop is running
-			s.onConnectionRequest(rn, connected)
+			//s.onConnectionRequest(rn, connected)
+			remotePub, e := crypto.NewPublicKey(rn.Bytes())
+			if e != nil {
+				// TODO handle error (not really, @Yosher promised that req will have a crypto.PublicKey)
+			}
+			_, e = s.cPool.getConnection(rn.IP(), remotePub)
+			if (e != nil) {
+				s.localNode.Warning("failed to connect to bootstrap node %v. err: %v", rn.ID(), e)
+				break
+			}
+			atomic.AddUint32(&bn, 1)
 		}
 	}
 
@@ -103,6 +114,14 @@ func (s *swarmImpl) ConnectToRandomNodes(count int) {
 		wg.Add(1)
 		done := make(chan error)
 		go func(d chan error, p node.RemoteNodeData) {
+			go func() {
+				remotePub, err := crypto.NewPublicKey(p.Bytes())
+				if err != nil {
+					// TODO handle error (not really, @Yosher promised that req will have a crypto.PublicKey)
+				}
+				_, err = s.cPool.getConnection(p.IP(), remotePub)
+				d <- err
+			}()
 			timeout := time.NewTimer(ConnectToNodeTimeout)
 			select {
 			case derr := <-d:
@@ -116,7 +135,6 @@ func (s *swarmImpl) ConnectToRandomNodes(count int) {
 				wg.Done()
 			}
 		}(done, p)
-		s.ConnectTo(p, done)
 	}
 
 	wg.Wait()
@@ -129,7 +147,7 @@ func (s *swarmImpl) onSendInternalMessage(r SendMessageReq) {
 	peer := s.peers[r.PeerID]
 	s.peerMapMutex.RUnlock()
 
-	if peer == nil {
+	for peer == nil {
 		prs := s.getNearestPeers(dht.NewIDFromBase58String(r.PeerID), 1)
 		if len(prs) == 0 {
 			//We're not sending to peers the routing table don't know about in bootstrap phase
@@ -137,27 +155,25 @@ func (s *swarmImpl) onSendInternalMessage(r SendMessageReq) {
 		}
 		p := prs[0]
 		s.onRegisterNodeRequest(p)
-		finish := make(chan error)
-		s.onConnectionRequest(p, finish)
-		go func(f chan error, msg SendMessageReq) {
-			err := <-f
-			if err != nil {
-				return
-			}
-			s.SendMessage(msg)
-		}(finish, r)
-		return
 	}
 
-	conn := peer.GetActiveConnection()
-	session := peer.GetAuthenticatedSession()
-
-	if conn == nil || session == nil {
-		if _, exist := s.messagesPendingSession[hex.EncodeToString(r.ReqID)]; !exist {
-			s.messagesPendingSession[hex.EncodeToString(r.ReqID)] = r
-		}
+	conn, err := s.cPool.getConnection(peer.TCPAddress(), peer.PublicKey())//peer.GetActiveConnection()
+	if err != nil {
+		s.localNode.Warning("failed to send message to %v, no valid connection. err: %v", peer.ID(), err)
 		return
 	}
+	session := conn.Session()
+	if session == nil {
+		s.localNode.Warning("failed to send message to %v, no valid session. err: %v", peer.ID(), err)
+		return
+	}
+	//
+	//if conn == nil || session == nil {
+	//	if _, exist := s.messagesPendingSession[hex.EncodeToString(r.ReqID)]; !exist {
+	//		s.messagesPendingSession[hex.EncodeToString(r.ReqID)] = r
+	//	}
+	//	return
+	//}
 
 	encPayload, err := session.Encrypt(r.Payload)
 	if err != nil {
@@ -203,6 +219,7 @@ func (s *swarmImpl) onSendInternalMessage(r SendMessageReq) {
 }
 
 func (s *swarmImpl) bootstrapLoop(retryTicker *time.Ticker) {
+	s.localNode.GetLogger().Info("DEBUG: swarm::bootstrapLoop")
 	s.bootstrap()
 BSLOOP:
 	for {
@@ -212,16 +229,16 @@ BSLOOP:
 			return
 		case <-s.bootstrapped:
 			break BSLOOP
-		case r := <-s.sendHandshakeMsg:
-			s.onSendHandshakeMessage(r)
-		case session := <-s.newSessions:
-			s.onNewSession(session)
+		//case r := <-s.sendHandshakeMsg:
+		//	s.onSendHandshakeMessage(r)
+		//case session := <-s.newSessions:
+		//	s.onNewSession(session)
 		case m := <-s.network.GetIncomingMessage():
 			s.onRemoteClientMessage(m)
-		case n := <-s.connectionRequests:
-			s.onConnectionRequest(n.req, n.done)
+		//case n := <-s.connectionRequests:
+		//	s.onConnectionRequest(n.req, n.done)
 		case r := <-s.sendMsgRequests:
-			s.onSendInternalMessage(r)
+			go s.onSendInternalMessage(r)
 		case qmsg := <-s.retryMessage:
 			s.retryMessageLater(qmsg)
 		case <-retryTicker.C:

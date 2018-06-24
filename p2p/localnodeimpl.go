@@ -146,6 +146,10 @@ func (n *localNodeImp) PublicKey() crypto.PublicKey {
 	return n.pubKey
 }
 
+func (n *localNodeImp) NetworkId() int {
+	return n.config.NetworkID
+}
+
 // SignToString signs a protobufs message with this node's private key, and returns a hex-encoded string signature.
 func (n *localNodeImp) SignToString(data proto.Message) (string, error) {
 	sign, err := n.Sign(data)

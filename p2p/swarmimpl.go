@@ -26,6 +26,7 @@ type swarmImpl struct {
 	network   net.Net
 	localNode LocalNode
 	demuxer   Demuxer
+	cPool	  *ConnectionPool
 
 	config nodeconfig.SwarmConfig
 
@@ -41,18 +42,18 @@ type swarmImpl struct {
 	peerMapMutex    sync.RWMutex    // Mutex for peer map
 	peers           map[string]Peer // NodeID -> Peer. known remote nodes. Swarm is a peer store.
 
-	connections       map[string]net.Connection // ConnID -> Connection - all open connections for tracking and mngmnt
+	connections       map[string]*net.Connection // ConnID -> Connection - all open connections for tracking and mngmnt
 	peerByConMapMutex sync.RWMutex              //Mutex for peer by connection map
 	peersByConnection map[string]Peer           // ConnID -> Peer remote nodes indexed by their connections.
 
 	// todo: remove all idle sessions every n hours (configurable)
-	allSessions   map[string]NetworkSession // SessionId -> Session data. all authenticated session
-	sessionsMutex sync.RWMutex              // Mutex for peer map
+	//allSessions   map[string]net.NetworkSession // SessionId -> Session data. all authenticated session
+	//sessionsMutex sync.RWMutex              // Mutex for peer map
 
 	// To catch callbacks when returned from network (Error or Sent)
 	outgoingSendsCallbacks map[string]map[string]chan SendError // k - conn id v-  reqID -> chan SendError
 
-	messagesPendingSession map[string]SendMessageReq // k - unique req id. outgoing messages which pend an auth session with remote node to be sent out
+	//messagesPendingSession map[string]SendMessageReq // k - unique req id. outgoing messages which pend an auth session with remote node to be sent out
 
 	incomingPendingSession map[string][]net.IncomingMessage
 	incomingPendingMutex   sync.RWMutex
@@ -67,13 +68,13 @@ type swarmImpl struct {
 	messagesRetryQueue []SendMessageReq
 
 	// comm channels
-	connectionRequests chan nodeAction          // local requests to establish a session w a remote node
+	//connectionRequests chan nodeAction          // local requests to establish a session w a remote node
 	disconnectRequests chan node.RemoteNodeData // local requests to kill session and disconnect from node
 
 	// Recv message reqs and send them
 	sendMsgRequests chan SendMessageReq // local request to send a session message to a node and callback on error or data
 	// Recv handshake message reqs and send them
-	sendHandshakeMsg chan SendMessageReq // local request to send a handshake protocol message
+	//sendHandshakeMsg chan SendMessageReq // local request to send a handshake protocol message
 
 	// Shutdown the loop
 	shutdown chan struct{} // local request to kill the swarm from outside. e.g when local node is shutting down
@@ -82,11 +83,11 @@ type swarmImpl struct {
 	registerNodeReq chan node.RemoteNodeData // local request to register a node based on minimal data
 
 	// swarm provides handshake protocol
-	handshakeProtocol HandshakeProtocol
+	//handshakeProtocol HandshakeProtocol
 
 	// handshake protocol callback - sessions updates are pushed here
 	// TODO : listen only to either new session or error.
-	newSessions chan HandshakeData // gets callback from handshake protocol when new session are created and/or auth
+	//newSessions chan HandshakeData // gets callback from handshake protocol when new session are created and/or auth
 
 	// dht find-node protocol
 	findNodeProtocol FindNodeProtocol
@@ -97,7 +98,7 @@ type swarmImpl struct {
 // NewSwarm creates a new swarm for a local node.
 func NewSwarm(tcpAddress string, l LocalNode) (Swarm, error) {
 
-	n, err := net.NewNet(tcpAddress, l.Config(), l.GetLogger())
+	n, err := net.NewNet(tcpAddress, l.Config(), l.GetLogger(), l)
 	if err != nil {
 		log.Error("can't create swarm without a network", err)
 		return nil, err
@@ -109,6 +110,7 @@ func NewSwarm(tcpAddress string, l LocalNode) (Swarm, error) {
 		bootError:    nil,
 		localNode:    l,
 		network:      n,
+		cPool:		  NewConnectionPool(n),
 		shutdown:     make(chan struct{}), // non-buffered so requests to shutdown block until swarm is shut down
 
 		afterBootCallback: make(chan error, 1), // notify clients about
@@ -119,8 +121,8 @@ func NewSwarm(tcpAddress string, l LocalNode) (Swarm, error) {
 		peersByConnection:      make(map[string]Peer),
 		peers:                  make(map[string]Peer),
 		getPeerRequests:        make(chan getPeerRequest),
-		connections:            make(map[string]net.Connection),
-		messagesPendingSession: make(map[string]SendMessageReq),
+		connections:            make(map[string]*net.Connection),
+		//messagesPendingSession: make(map[string]SendMessageReq),
 
 		incomingPendingSession: make(map[string][]net.IncomingMessage),
 
@@ -130,20 +132,20 @@ func NewSwarm(tcpAddress string, l LocalNode) (Swarm, error) {
 		retryMessage:       make(chan SendMessageReq, 10),
 		messagesRetryQueue: make([]SendMessageReq, 0),
 
-		allSessions: make(map[string]NetworkSession),
+		//allSessions: make(map[string]NetworkSession),
 
 		outgoingSendsCallbacks: make(map[string]map[string]chan SendError),
 
 		// todo: figure optimal buffer size for chans
 		// ref: https://www.goinggo.net/2017/10/the-behavior-of-channels.html
 
-		connectionRequests: make(chan nodeAction, 20),
+		//connectionRequests: make(chan nodeAction, 20),
 		disconnectRequests: make(chan node.RemoteNodeData, 20),
 
 		sendMsgRequests:  make(chan SendMessageReq, 20),
-		sendHandshakeMsg: make(chan SendMessageReq, 20),
+		//sendHandshakeMsg: make(chan SendMessageReq, 20),
 		demuxer:          NewDemuxer(l.GetLogger()),
-		newSessions:      make(chan HandshakeData, 20),
+		//newSessions:      make(chan HandshakeData, 20),
 		registerNodeReq:  make(chan node.RemoteNodeData, 20),
 
 		nodeEventRemoveChannel: make(chan NodeEventCallback),
@@ -152,7 +154,7 @@ func NewSwarm(tcpAddress string, l LocalNode) (Swarm, error) {
 
 		peerByConMapMutex: sync.RWMutex{},
 		peerMapMutex:      sync.RWMutex{},
-		sessionsMutex:     sync.RWMutex{},
+		//sessionsMutex:     sync.RWMutex{},
 	}
 
 	// node's routing table
@@ -163,8 +165,8 @@ func NewSwarm(tcpAddress string, l LocalNode) (Swarm, error) {
 
 	s.localNode.Debug("Created swarm for local node %s, %s", tcpAddress, l.Pretty())
 
-	s.handshakeProtocol = NewHandshakeProtocol(s)
-	s.handshakeProtocol.RegisterNewSessionCallback(s.newSessions)
+	//s.handshakeProtocol = NewHandshakeProtocol(s)
+	//s.handshakeProtocol.RegisterNewSessionCallback(s.newSessions)
 
 	go s.beginProcessingEvents(s.config.Bootstrap)
 
@@ -247,9 +249,9 @@ func (s *swarmImpl) getFindNodeProtocol() FindNodeProtocol {
 	return s.findNodeProtocol
 }
 
-func (s *swarmImpl) getHandshakeProtocol() HandshakeProtocol {
-	return s.handshakeProtocol
-}
+//func (s *swarmImpl) getHandshakeProtocol() HandshakeProtocol {
+//	return s.handshakeProtocol
+//}
 
 func (s *swarmImpl) getRoutingTable() table.RoutingTable {
 	return s.routingTable
@@ -260,9 +262,9 @@ func (s *swarmImpl) RegisterNode(data node.RemoteNodeData) {
 	s.registerNodeReq <- data
 }
 
-func (s *swarmImpl) ConnectTo(req node.RemoteNodeData, done chan error) {
-	s.connectionRequests <- nodeAction{req, done}
-}
+//func (s *swarmImpl) ConnectTo(req node.RemoteNodeData, done chan error) {
+//	s.connectionRequests <- nodeAction{req, done}
+//}
 
 func (s *swarmImpl) DisconnectFrom(req node.RemoteNodeData) {
 	s.disconnectRequests <- req
@@ -274,6 +276,10 @@ func (s *swarmImpl) GetDemuxer() Demuxer {
 
 func (s *swarmImpl) GetLocalNode() LocalNode {
 	return s.localNode
+}
+
+func (s *swarmImpl) getConnectionPool() *ConnectionPool {
+	return s.cPool
 }
 
 func (s *swarmImpl) GetPeer(id string, callback chan Peer) {
@@ -294,9 +300,9 @@ func (s *swarmImpl) SendMessage(req SendMessageReq) {
 	s.sendMsgRequests <- req
 }
 
-func (s *swarmImpl) sendHandshakeMessage(req SendMessageReq) {
-	s.sendHandshakeMsg <- req
-}
+//func (s *swarmImpl) sendHandshakeMessage(req SendMessageReq) {
+//	s.sendHandshakeMsg <- req
+//}
 
 func (s *swarmImpl) Shutdown() {
 	s.shutdown <- struct{}{}
@@ -324,12 +330,17 @@ func (s *swarmImpl) shutDownInternal() {
 func (s *swarmImpl) listenToNetworkMessages() {
 Loop:
 	for {
+		s.localNode.GetLogger().Info("DEBUG: swarm::listenToNetworkMessages")
 		select {
-		case c := <-s.network.GetNewConnections():
-			go s.onRemoteClientConnected(c)
+		//case c := <-s.network.GetNewConnections():
+		//	go s.onNewConnection(c)
 
 		case m := <-s.network.GetIncomingMessage():
 			go s.onRemoteClientMessage(m)
+
+		case m := <-s.network.GetPreSessionIncomingMessages():
+			s.localNode.GetLogger().Info("DEBUG: about to handle pre session msg")
+			go s.network.HandlePreSessionIncomingMessage(m)
 
 		case err := <-s.network.GetConnectionErrors():
 			go s.onConnectionError(err)
@@ -357,6 +368,7 @@ func (s *swarmImpl) beginProcessingEvents(bootstrap bool) {
 	checkTimeSync := time.NewTicker(nodeconfig.TimeConfigValues.RefreshNtpInterval)
 	retryMessage := time.NewTicker(time.Second * 5)
 
+	s.localNode.GetLogger().Info("DEBUG: swarm::beginProcessingEvents")
 	if bootstrap {
 		s.bootstrapLoop(retryMessage)
 	}
@@ -368,18 +380,18 @@ Loop:
 			s.shutDownInternal()
 			s.shutdown <- struct{}{}
 			break Loop
-		case r := <-s.sendHandshakeMsg:
-			s.onSendHandshakeMessage(r)
+		//case r := <-s.sendHandshakeMsg:
+		//	s.onSendHandshakeMessage(r)
 
-		case session := <-s.newSessions:
-			s.onNewSession(session)
+		//case session := <-s.newSessions:
+		//	s.onNewSession(session)
 
 		case r := <-s.sendMsgRequests:
 			s.onSendMessageRequest(r)
 
-		case n := <-s.connectionRequests:
-			// TODO : done channel should be buffered
-			s.onConnectionRequest(n.req, n.done)
+		//case n := <-s.connectionRequests:
+		//	// TODO : done channel should be buffered
+		//	s.onConnectionRequest(n.req, n.done)
 
 		case n := <-s.disconnectRequests:
 			s.onDisconnectionRequest(n)

@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"sync"
-	"sync/atomic"
-
 	"github.com/spacemeshos/go-spacemesh/crypto"
 	"github.com/spacemeshos/go-spacemesh/filesystem"
 	"github.com/spacemeshos/go-spacemesh/p2p/nodeconfig"
@@ -20,33 +18,25 @@ func TestSessionCreation(t *testing.T) {
 
 	filesystem.SetupTestSpacemeshDataFolders(t, "swarm_test")
 
-	callback := make(chan HandshakeData)
-	callback2 := make(chan HandshakeData)
+	//callback := make(chan HandshakeData)
+	//callback2 := make(chan HandshakeData)
 	node1Local, _ := GenerateTestNode(t)
 	node2Local, _ := GenerateTestNode(t)
-	node1Local.GetSwarm().getHandshakeProtocol().RegisterNewSessionCallback(callback)
-	node2Local.GetSwarm().getHandshakeProtocol().RegisterNewSessionCallback(callback2)
-	node1Local.GetSwarm().ConnectTo(node2Local.GetRemoteNodeData(), nil)
-
-	sessions := uint32(0)
-Loop:
-	for {
-		s := atomic.LoadUint32(&sessions)
-		if s == 2 {
-			break Loop
-		}
-		select {
-		case c := <-callback:
-			if c.Session().IsAuthenticated() {
-				atomic.AddUint32(&sessions, 1)
-			}
-		case c2 := <-callback2:
-			if c2.Session().IsAuthenticated() {
-				atomic.AddUint32(&sessions, 1)
-			}
-		case <-time.After(time.Second * 10):
-			t.Fatalf("Timeout error - failed to create session")
-		}
+	//node1Local.GetSwarm().getHandshakeProtocol().RegisterNewSessionCallback(callback)
+	//node2Local.GetSwarm().getHandshakeProtocol().RegisterNewSessionCallback(callback2)
+	c, e := node1Local.GetSwarm().getConnectionPool().getConnection(node2Local.TCPAddress(), node2Local.PublicKey())//ConnectTo(node2Local.GetRemoteNodeData(), nil)
+	if e != nil {
+		t.Fatalf("failed to connect. err: %v", e)
+	}
+	if c.Session() == nil {
+		t.Fatalf("failed to establish session in node1")
+	}
+	c = node2Local.GetSwarm().getConnectionPool().hasConnection(node1Local.PublicKey())
+	if c == nil {
+		t.Fatalf("node2 has no connection with node1")
+	}
+	if c.Session() == nil {
+		t.Fatalf("failed to establish session in node2")
 	}
 
 	node1Local.Shutdown()
@@ -87,7 +77,11 @@ func TestMultipleSessions(t *testing.T) {
 	for i := 0; i < count; i++ {
 		n, _ := GenerateTestNode(t) // create a node
 		nodes[i] = n
-		n.GetSwarm().ConnectTo(rn.GetRemoteNodeData(), nil) // connect to first node
+		remotePub, err := crypto.NewPublicKey(rn.GetRemoteNodeData().Bytes())
+		if err != nil {
+			// TODO handle error (not really, @Yosher promised that req will have a crypto.PublicKey)
+		}
+		n.GetSwarm().getConnectionPool().getConnection(rn.GetRemoteNodeData().IP(), remotePub) // connect to first node
 		//nodes = append(nodes, n)
 	}
 
