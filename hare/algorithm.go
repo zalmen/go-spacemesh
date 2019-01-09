@@ -166,7 +166,7 @@ func (proc *ConsensusProcess) handleMessage(m *pb.HareMessage) {
 		return
 	}
 
-	// validate role
+	// validate role.
 	if proc.oracle.Role(Signature(m.Message.RoleProof)) == roleFromRoundCounter(m.Message.K) {
 		log.Warning("invalid role detected for: ", m.String())
 		return
